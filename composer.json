@@ -1,0 +1,44 @@
+{
+    "name": "mailgazelle/php-sdk",
+    "description": "PHP SDK for sending transactional email through Mail Gazelle.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "mailgazelle",
+        "email",
+        "transactional",
+        "sdk"
+    ],
+    "authors": [
+        {
+            "name": "Srdjan Marjanovic",
+            "email": "srdjan@foobar.rs"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "MailGazelle\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MailGazelle\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

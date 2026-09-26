@@ -18,7 +18,7 @@ final readonly class Attachment
      * @param string $filename Basename only. Path segments are rejected.
      * @param string $content Base64-encoded file bytes.
      * @param string|null $contentType MIME type. Guessed from the filename when omitted.
-     * @param string|null $contentId Optional CID for inline images.
+     * @param string|null $contentId Optional CID for an inline part. A leading `cid:` and angle brackets are stripped.
      */
     private function __construct(
         public string $filename,
@@ -32,7 +32,7 @@ final readonly class Attachment
     /**
      * Attach a file from the local filesystem.
      *
-     * @throws AttachmentException When the path cannot be read or the filename is invalid.
+     * @throws AttachmentException When the path cannot be read, the filename is invalid, or the content id is empty.
      */
     public static function fromPath(
         string $path,
@@ -60,7 +60,7 @@ final readonly class Attachment
     /**
      * Attach raw (not base64-encoded) file bytes.
      *
-     * @throws AttachmentException When the filename is invalid or the contents are empty.
+     * @throws AttachmentException When the filename is invalid, the contents are empty, or the content id is empty.
      */
     public static function fromContents(
         string $filename,
@@ -80,7 +80,7 @@ final readonly class Attachment
     /**
      * Attach content that is already base64-encoded.
      *
-     * @throws AttachmentException When the filename is invalid or the content is not valid base64.
+     * @throws AttachmentException When the filename is invalid, the content is not valid base64, or the content id is empty.
      */
     public static function fromBase64(
         string $filename,
@@ -147,9 +147,34 @@ final readonly class Attachment
         $contentType = $contentType === null || trim($contentType) === ''
             ? self::guessContentType($filename)
             : trim($contentType);
-        $contentId = $contentId === null || trim($contentId) === '' ? null : trim($contentId);
 
-        return new self($filename, $base64, $contentType, $contentId, $decodedSize);
+        return new self($filename, $base64, $contentType, self::normalizeContentId($contentId), $decodedSize);
+    }
+
+    /**
+     * @throws AttachmentException When the id is empty or contains whitespace after normalization.
+     */
+    private static function normalizeContentId(?string $contentId): ?string
+    {
+        if ($contentId === null || trim($contentId) === '') {
+            return null;
+        }
+
+        $value = trim($contentId);
+        if (str_starts_with(strtolower($value), 'cid:')) {
+            $value = substr($value, 4);
+        }
+
+        $value = trim($value, " \t<>");
+        if ($value === '' || preg_match('/\s/', $value) === 1) {
+            throw new AttachmentException(
+                'Attachment content ids must not be empty.',
+                'attachment_invalid',
+                422,
+            );
+        }
+
+        return $value;
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace MailGazelle\Emails;
 
+use MailGazelle\Exceptions\AttachmentException;
 use MailGazelle\Exceptions\AttachmentTooLargeException;
 use MailGazelle\Exceptions\HtmlTooLargeException;
 use MailGazelle\Exceptions\ValidationException;
@@ -20,21 +21,40 @@ final class Email
 {
     public const MAX_HTML_BYTES = 512 * 1024;
 
-    public const MAX_ATTACHMENTS = 10;
-
     public const MAX_ATTACHMENT_BYTES = 7 * 1024 * 1024;
 
+    public const MAX_RECIPIENTS = 50;
+
+    public const MAX_TAGS = 48;
+
+    public const MAX_TAG_NAME_LENGTH = 64;
+
+    public const MAX_TAG_VALUE_LENGTH = 256;
+
+    public const MAX_HEADERS = 50;
+
+    public const MAX_HEADER_VALUE_LENGTH = 8192;
+
     /**
+     * @param list<Address> $to
+     * @param list<Address> $cc
+     * @param list<Address> $bcc
+     * @param list<Address> $replyTo
+     * @param array<string, string> $headers
      * @param array<string, string> $tags
      * @param list<Attachment> $attachments
      */
     private function __construct(
-        private Address $to,
+        private array $to,
         private ?string $subject = null,
         private ?string $text = null,
         private ?string $html = null,
         private ?Address $from = null,
-        private ?Address $replyTo = null,
+        private array $cc = [],
+        private array $bcc = [],
+        private array $replyTo = [],
+        private bool $omitReplyTo = false,
+        private array $headers = [],
         private array $tags = [],
         private ?string $idempotencyKey = null,
         private array $attachments = [],
@@ -42,13 +62,48 @@ final class Email
     }
 
     /**
-     * Start a message addressed to exactly one recipient.
+     * Start a message addressed to one recipient.
+     *
+     * Add further recipients with {@see addTo()}, {@see cc()}, and {@see bcc()}.
+     * Together they may include at most 50 addresses.
      *
      * @throws ValidationException When the address is invalid.
      */
     public static function to(string $email, ?string $name = null): self
     {
-        return new self(to: new Address($email, $name));
+        return new self(to: [new Address($email, $name)]);
+    }
+
+    /**
+     * Add another To address.
+     *
+     * @throws ValidationException When the address is invalid or the recipient limit is exceeded.
+     */
+    public function addTo(string $email, ?string $name = null): self
+    {
+        return $this->appendRecipient('to', new Address($email, $name));
+    }
+
+    /**
+     * Add a Cc address.
+     *
+     * @throws ValidationException When the address is invalid or the recipient limit is exceeded.
+     */
+    public function cc(string $email, ?string $name = null): self
+    {
+        return $this->appendRecipient('cc', new Address($email, $name));
+    }
+
+    /**
+     * Add a Bcc address.
+     *
+     * Bcc is stored and delivered, and omitted from the visible MIME headers.
+     *
+     * @throws ValidationException When the address is invalid or the recipient limit is exceeded.
+     */
+    public function bcc(string $email, ?string $name = null): self
+    {
+        return $this->appendRecipient('bcc', new Address($email, $name));
     }
 
     /**
@@ -76,7 +131,7 @@ final class Email
     /**
      * Set the HTML body.
      *
-     * Mail Gazelle rejects HTML larger than 512 KB.
+     * Mail Gazelle rejects HTML larger than 512 KB. HTML and text may be sent together.
      */
     public function html(string $html): self
     {
@@ -102,46 +157,126 @@ final class Email
     }
 
     /**
-     * Override the product default Reply-To address.
+     * Add a Reply-To address.
+     *
+     * Serialized as an array. Omit this method to keep the product default.
+     * A later call clears {@see withoutReplyTo()}.
      *
      * @throws ValidationException When the address is invalid.
      */
     public function replyTo(string $email, ?string $name = null): self
     {
         $copy = clone $this;
-        $copy->replyTo = new Address($email, $name);
+        $copy->omitReplyTo = false;
+        $copy->replyTo[] = new Address($email, $name);
 
         return $copy;
     }
 
     /**
-     * Add a single tag. Keys and values are sanitized to `[A-Za-z0-9_-]`.
+     * Omit Reply-To by sending an empty `reply_to` array.
      *
-     * @throws ValidationException When the key is empty after sanitization.
+     * Clears any addresses added with {@see replyTo()}.
+     */
+    public function withoutReplyTo(): self
+    {
+        $copy = clone $this;
+        $copy->replyTo = [];
+        $copy->omitReplyTo = true;
+
+        return $copy;
+    }
+
+    /**
+     * Add or replace one custom header.
+     *
+     * Names must contain only letters, numbers, and hyphens. Values cannot
+     * contain line breaks and must be at most 8192 characters. At most 50
+     * headers. The API ignores `From`, `To`, `Cc`, `Bcc`, `Reply-To`,
+     * `Sender`, `Subject`, `Content-Type`, and `Return-Path`. `Message-ID`
+     * is kept when it is present.
+     *
+     * @throws ValidationException When the header is invalid or the limit is exceeded.
+     */
+    public function header(string $name, string $value): self
+    {
+        self::assertHeader($name, $value);
+
+        $copy = clone $this;
+        $isNew = !array_key_exists($name, $copy->headers);
+        if ($isNew && count($copy->headers) >= self::MAX_HEADERS) {
+            throw new ValidationException(
+                sprintf('A message can include at most %d headers.', self::MAX_HEADERS),
+                'validation_error',
+                422,
+            );
+        }
+
+        $copy->headers[$name] = $value;
+
+        return $copy;
+    }
+
+    /**
+     * Replace all custom headers.
+     *
+     * @param array<string, string> $headers
+     *
+     * @throws ValidationException When any header is invalid or the limit is exceeded.
+     */
+    public function headers(array $headers): self
+    {
+        $copy = clone $this;
+        $copy->headers = [];
+        foreach ($headers as $name => $value) {
+            $copy = $copy->header((string) $name, (string) $value);
+        }
+
+        return $copy;
+    }
+
+    /**
+     * Add a single tag.
+     *
+     * Names and values must match `[A-Za-z0-9_-]`. Names are at most 64
+     * characters, values at most 256. At most 48 tags. `team_id` and
+     * `product_id` are reserved. Invalid tags are rejected, not stripped.
+     *
+     * @throws ValidationException When the tag is invalid or the limit is exceeded.
      */
     public function tag(string $key, string $value): self
     {
-        $key = self::sanitizeTagPart($key);
-        if ($key === '') {
+        self::assertTagPart($key, self::MAX_TAG_NAME_LENGTH);
+        self::assertTagPart($value, self::MAX_TAG_VALUE_LENGTH);
+        if (in_array($key, ['team_id', 'product_id'], true)) {
             throw new ValidationException(
-                'Tag keys must contain at least one letter, number, underscore, or hyphen.',
+                'The tag names team_id and product_id are reserved.',
                 'validation_error',
                 422,
             );
         }
 
         $copy = clone $this;
-        $copy->tags[$key] = self::sanitizeTagPart($value);
+        $isNew = !array_key_exists($key, $copy->tags);
+        if ($isNew && count($copy->tags) >= self::MAX_TAGS) {
+            throw new ValidationException(
+                sprintf('A message can include at most %d tags.', self::MAX_TAGS),
+                'validation_error',
+                422,
+            );
+        }
+
+        $copy->tags[$key] = $value;
 
         return $copy;
     }
 
     /**
-     * Replace all tags. Keys and values are sanitized to `[A-Za-z0-9_-]`.
+     * Replace all tags.
      *
      * @param array<string, string> $tags
      *
-     * @throws ValidationException When any key is empty after sanitization.
+     * @throws ValidationException When any tag is invalid or the limit is exceeded.
      */
     public function tags(array $tags): self
     {
@@ -158,6 +293,7 @@ final class Email
      * Set an idempotency key unique per team.
      *
      * Repeating the same key returns the original message and does not send again.
+     * A replay is not checked against the monthly quota.
      */
     public function idempotencyKey(string $key): self
     {
@@ -168,18 +304,26 @@ final class Email
     }
 
     /**
-     * Attach a file. A message may have at most 10 attachments totaling 7 MB decoded.
+     * Attach a file.
      *
-     * @throws ValidationException When the attachment limit is exceeded.
+     * How many files a message may include is set by the team's plan (the
+     * default is 10). The decoded total cannot exceed the 7 MB platform ceiling.
+     * Duplicate content ids on one message are rejected.
+     *
+     * @throws AttachmentException When the content id is already used on this message.
      */
     public function attach(Attachment $attachment): self
     {
-        if (count($this->attachments) >= self::MAX_ATTACHMENTS) {
-            throw new ValidationException(
-                sprintf('A message may include at most %d attachments.', self::MAX_ATTACHMENTS),
-                'validation_error',
-                422,
-            );
+        if ($attachment->contentId !== null) {
+            foreach ($this->attachments as $existing) {
+                if ($existing->contentId === $attachment->contentId) {
+                    throw new AttachmentException(
+                        'Attachment content ids must be unique.',
+                        'attachment_invalid',
+                        422,
+                    );
+                }
+            }
         }
 
         $copy = clone $this;
@@ -202,7 +346,10 @@ final class Email
         $this->assertReady();
 
         $payload = [
-            'to' => [$this->to->toArray()],
+            'to' => array_map(
+                static fn (Address $address): array => $address->toArray(),
+                $this->to,
+            ),
             'subject' => $this->subject,
         ];
 
@@ -218,8 +365,31 @@ final class Email
             $payload['from'] = $this->from->toArray();
         }
 
-        if ($this->replyTo !== null) {
-            $payload['reply_to'] = $this->replyTo->toArray();
+        if ($this->cc !== []) {
+            $payload['cc'] = array_map(
+                static fn (Address $address): array => $address->toArray(),
+                $this->cc,
+            );
+        }
+
+        if ($this->bcc !== []) {
+            $payload['bcc'] = array_map(
+                static fn (Address $address): array => $address->toArray(),
+                $this->bcc,
+            );
+        }
+
+        if ($this->omitReplyTo) {
+            $payload['reply_to'] = [];
+        } elseif ($this->replyTo !== []) {
+            $payload['reply_to'] = array_map(
+                static fn (Address $address): array => $address->toArray(),
+                $this->replyTo,
+            );
+        }
+
+        if ($this->headers !== []) {
+            $payload['headers'] = $this->headers;
         }
 
         if ($this->tags !== []) {
@@ -238,6 +408,31 @@ final class Email
         }
 
         return $payload;
+    }
+
+    /**
+     * @throws ValidationException When the address is invalid or the recipient limit is exceeded.
+     */
+    private function appendRecipient(string $field, Address $address): self
+    {
+        if (count($this->to) + count($this->cc) + count($this->bcc) >= self::MAX_RECIPIENTS) {
+            throw new ValidationException(
+                sprintf('A message can include at most %d recipients.', self::MAX_RECIPIENTS),
+                'validation_error',
+                422,
+            );
+        }
+
+        $copy = clone $this;
+        if ($field === 'cc') {
+            $copy->cc[] = $address;
+        } elseif ($field === 'bcc') {
+            $copy->bcc[] = $address;
+        } else {
+            $copy->to[] = $address;
+        }
+
+        return $copy;
     }
 
     /**
@@ -283,8 +478,48 @@ final class Email
         }
     }
 
-    private static function sanitizeTagPart(string $value): string
+    /**
+     * @throws ValidationException
+     */
+    private static function assertHeader(string $name, string $value): void
     {
-        return (string) preg_replace('/[^A-Za-z0-9_-]/', '', $value);
+        if (preg_match('/^[A-Za-z0-9-]+$/', $name) !== 1) {
+            throw new ValidationException(
+                'Header names must contain only letters, numbers, and hyphens.',
+                'validation_error',
+                422,
+            );
+        }
+
+        if (preg_match('/[\r\n]/', $value) === 1) {
+            throw new ValidationException(
+                'Header values cannot contain line breaks.',
+                'validation_error',
+                422,
+            );
+        }
+
+        $length = function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+        if ($length > self::MAX_HEADER_VALUE_LENGTH) {
+            throw new ValidationException(
+                sprintf('Header values must be at most %d characters.', self::MAX_HEADER_VALUE_LENGTH),
+                'validation_error',
+                422,
+            );
+        }
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private static function assertTagPart(string $value, int $maxLength): void
+    {
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $value) !== 1 || strlen($value) > $maxLength) {
+            throw new ValidationException(
+                'Tag names and values may only contain letters, numbers, underscores, and hyphens.',
+                'validation_error',
+                422,
+            );
+        }
     }
 }

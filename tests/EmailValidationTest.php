@@ -56,16 +56,148 @@ final class EmailValidationTest extends TestCase
         Email::to('user@example.com')->tag('!!!', 'value');
     }
 
-    public function testMoreThanTenAttachmentsIsRejected(): void
+    public function testInvalidTagCharactersAreRejected(): void
     {
-        $email = Email::to('user@example.com')->subject('Files')->text('See attached');
-        for ($i = 0; $i < Email::MAX_ATTACHMENTS; ++$i) {
-            $email = $email->attach(Attachment::fromContents('file' . $i . '.txt', 'x'));
+        $this->expectException(ValidationException::class);
+        Email::to('user@example.com')->tag('weird key!', 'value with spaces');
+    }
+
+    public function testReservedTagNameIsRejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('reserved');
+        Email::to('user@example.com')->tag('product_id', 'abc');
+    }
+
+    public function testTagLongerThanLimitIsRejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        Email::to('user@example.com')->tag(str_repeat('a', Email::MAX_TAG_NAME_LENGTH + 1), 'ok');
+    }
+
+    public function testMoreThanFortyEightTagsIsRejected(): void
+    {
+        $email = Email::to('user@example.com');
+        for ($i = 0; $i < Email::MAX_TAGS; ++$i) {
+            $email = $email->tag('tag' . $i, 'value');
         }
 
         $this->expectException(ValidationException::class);
-        $this->expectExceptionMessage('A message may include at most 10 attachments.');
-        $email->attach(Attachment::fromContents('overflow.txt', 'x'));
+        $this->expectExceptionMessage('at most 48 tags');
+        $email->tag('overflow', 'value');
+    }
+
+    public function testAtMostFiftyRecipients(): void
+    {
+        $email = Email::to('user0@example.com');
+        for ($i = 1; $i < Email::MAX_RECIPIENTS; ++$i) {
+            $email = ($i % 2 === 0)
+                ? $email->cc('user' . $i . '@example.com')
+                : $email->addTo('user' . $i . '@example.com');
+        }
+
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('at most 50 recipients');
+        $email->bcc('overflow@example.com');
+    }
+
+    public function testInvalidHeaderNameIsRejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('Header names');
+        Email::to('user@example.com')->header('Bad Name', 'x');
+    }
+
+    public function testHeaderValueLineBreakIsRejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('line breaks');
+        Email::to('user@example.com')->header('X-Custom', "a\nb");
+    }
+
+    public function testHeaderValueLongerThanLimitIsRejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('8192');
+        Email::to('user@example.com')->header('X-Custom', str_repeat('a', Email::MAX_HEADER_VALUE_LENGTH + 1));
+    }
+
+    public function testMoreThanFiftyHeadersIsRejected(): void
+    {
+        $email = Email::to('user@example.com');
+        for ($i = 0; $i < Email::MAX_HEADERS; ++$i) {
+            $email = $email->header('X-H' . $i, 'value');
+        }
+
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('at most 50 headers');
+        $email->header('X-Overflow', 'value');
+    }
+
+    public function testAttachmentCountIsNotCappedLocally(): void
+    {
+        $email = Email::to('user@example.com')->subject('Files')->text('See attached');
+        for ($i = 0; $i < 11; ++$i) {
+            $email = $email->attach(Attachment::fromContents('file' . $i . '.txt', 'x'));
+        }
+
+        $payload = $email->toPayload();
+        $this->assertCount(11, $payload['attachments']);
+    }
+
+    public function testContentIdIsNormalized(): void
+    {
+        $attachment = Attachment::fromContents('logo.png', 'PNG', contentId: 'cid:<logo>');
+        $this->assertSame('logo', $attachment->contentId);
+    }
+
+    public function testEmptyContentIdIsRejected(): void
+    {
+        $this->expectException(AttachmentException::class);
+        Attachment::fromContents('logo.png', 'PNG', contentId: 'cid:<>');
+    }
+
+    public function testContentIdWithWhitespaceIsRejected(): void
+    {
+        $this->expectException(AttachmentException::class);
+        Attachment::fromContents('logo.png', 'PNG', contentId: 'lo go');
+    }
+
+    public function testDuplicateContentIdIsRejected(): void
+    {
+        $this->expectException(AttachmentException::class);
+        $this->expectExceptionMessage('unique');
+        Email::to('user@example.com')
+            ->attach(Attachment::fromContents('a.png', 'a', contentId: 'logo'))
+            ->attach(Attachment::fromContents('b.png', 'b', contentId: 'cid:<logo>'));
+    }
+
+    public function testWithoutReplyToClearsAddresses(): void
+    {
+        $payload = Email::to('user@example.com')
+            ->subject('Hi')
+            ->text('Hi')
+            ->replyTo('support@example.com')
+            ->replyTo('other@example.com')
+            ->withoutReplyTo()
+            ->toPayload();
+
+        $this->assertSame([], $payload['reply_to']);
+    }
+
+    public function testReplyToAfterOmitIncludesTheAddress(): void
+    {
+        $payload = Email::to('user@example.com')
+            ->subject('Hi')
+            ->text('Hi')
+            ->withoutReplyTo()
+            ->replyTo('support@example.com', 'Support')
+            ->toPayload();
+
+        $this->assertSame(
+            [['email' => 'support@example.com', 'name' => 'Support']],
+            $payload['reply_to'],
+        );
     }
 
     public function testDecodedAttachmentsOverSevenMegabytes(): void

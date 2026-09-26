@@ -56,7 +56,9 @@ final class ErrorMapper
             'recipient_suppressed' => new RecipientSuppressedException($message, $code, $httpStatus, $details, $previous),
             'attachment_invalid' => new AttachmentException($message, $code, $httpStatus, $details, $previous),
             'attachment_too_large' => new AttachmentTooLargeException($message, $code, $httpStatus, $details, $previous),
+            'quota_exceeded' => new QuotaExceededException($message, $code, $httpStatus, $details, $previous),
             'html_too_large' => new HtmlTooLargeException($message, $code, $httpStatus, $details, $previous),
+            'message_too_large' => new MessageTooLargeException($message, $code, $httpStatus, $details, $previous),
             'rate_limited' => new RateLimitException($message, $code, $httpStatus, $details, $previous),
             default => new ApiException($message, $code, $httpStatus, $details, $previous),
         };

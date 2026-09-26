@@ -4,6 +4,12 @@ All notable changes to this package are documented here. The format is based on 
 
 Update this file in the same change as [`doc/api.md`](doc/api.md) and the public PHP API.
 
+## [Unreleased]
+
+### Changed
+
+- Document that `product_not_ready` also covers a paused team (and a team with no SES tenant). Same exception class and HTTP status; send payload unchanged.
+
 ## [1.0.0] - 2026-09-04
 
 ### Added

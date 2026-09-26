@@ -10,7 +10,7 @@ Operator environment names live in `.env.example`. Do not put AWS keys or raw to
 - Authenticate with `Authorization: Bearer tes_…`
 - Tokens are minted on a **ready** product (sending DKIM verified and MAIL FROM success). The raw token is shown once in the admin UI.
 - Rate limit: 60 requests per minute per token.
-- A disabled team or a product that is not `ready` cannot send (`403`, `product_not_ready`).
+- A disabled or paused team, or a product that is not `ready`, cannot send (`403`, `product_not_ready`).
 
 ## Onboarding
 

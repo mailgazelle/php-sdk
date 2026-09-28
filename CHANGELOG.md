@@ -4,8 +4,6 @@ All notable changes to this package are documented here. The format is based on 
 
 Update this file in the same change as [`doc/api.md`](doc/api.md) and the public PHP API.
 
-## [Unreleased]
-
 ## [1.1.0] - 2026-09-28
 
 ### Added

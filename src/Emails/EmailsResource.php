@@ -27,6 +27,7 @@ final class EmailsResource
      *
      * Returns immediately with HTTP 202. Delivery is asynchronous. The same
      * idempotency key returns the original message and does not send again.
+     * A replay is not checked against quota.
      *
      * @throws ValidationException
      * @throws HtmlTooLargeException

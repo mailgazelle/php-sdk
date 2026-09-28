@@ -51,7 +51,7 @@ Reuse one client per token. Do not create a new instance for every send.
 
 ## Send email
 
-Either HTML or plain text is required. `to` is exactly one recipient.
+Either HTML or plain text is required. Both may be sent together. `to` is one or more recipients. Together with `cc` and `bcc`, a message can include at most 50 addresses.
 
 ### Plain text
 
@@ -83,11 +83,26 @@ $client->emails()->send(
 
 HTML must be 512 KB or smaller.
 
-### From, Reply-To, tags, and idempotency
+### Recipients
 
-`from` and `reply_to` default to the product values when omitted. A custom From address must use the product's primary or sending domain.
+```php
+Email::to('user@example.com', 'Ada')
+    ->addTo('other@example.com')
+    ->cc('billing@example.com')
+    ->bcc('audit@example.com');
+```
 
-Tags are sanitized to `[A-Za-z0-9_-]`. An idempotency key is unique per team: the same key returns the original message and does not send again.
+`bcc` is stored and delivered, and omitted from the visible MIME headers.
+
+### From, Reply-To, headers, tags, and idempotency
+
+`from` and `reply_to` default to the product values when omitted. A custom From address must use the product's primary or sending domain. `replyTo()` adds an address and the field is sent as an array. `withoutReplyTo()` sends an empty array so Reply-To is omitted.
+
+Custom headers are an object of name to string. Names may contain letters, numbers, and hyphens. Values cannot contain line breaks and must be at most 8192 characters. A message may include at most 50 headers. The API ignores `From`, `To`, `Cc`, `Bcc`, `Reply-To`, `Sender`, `Subject`, `Content-Type`, and `Return-Path`. `Message-ID` is kept when it is present.
+
+Tags are an object of names and values. Each must match `[A-Za-z0-9_-]`. Names are at most 64 characters, values at most 256, and a message may include at most 48 tags. Invalid tags are rejected. `team_id` and `product_id` are reserved.
+
+An idempotency key is unique per team: the same key returns the original message and does not send again. A replay is not checked against quota.
 
 ```php
 $client->emails()->send(
@@ -96,6 +111,7 @@ $client->emails()->send(
         ->html('<p>Your invoice is attached.</p>')
         ->from('notif@example.com', 'App')
         ->replyTo('support@example.com')
+        ->header('Message-ID', '<welcome-42@example.com>')
         ->tag('campaign', 'welcome')
         ->idempotencyKey('welcome-user-42'),
 );
@@ -103,7 +119,11 @@ $client->emails()->send(
 
 ### Attachments
 
-A message may include at most 10 attachments. Decoded size across all files must be 7 MB or less. Filenames must be a basename (path segments are rejected). `content_type` is guessed from the filename when omitted. `content_id` marks an inline CID.
+The team's plan sets how many attachments a message may include and their combined decoded size. The defaults are 10 attachments and 7 MB. The SDK enforces the 7 MB platform ceiling. A lower plan limit is enforced by the API: `attachment_too_large`, and the message states that limit. More attachments than the plan allows is `validation_error` from the API.
+
+Filenames must be a basename (path segments are rejected). `content_type` is guessed from the filename when omitted. `content_id` marks an inline part; reference it from HTML as `cid:{content_id}`. A leading `cid:` and surrounding angle brackets are stripped. Empty or duplicate ids are rejected.
+
+The assembled raw MIME (HTML, text, headers, and base64 attachments) must be 10 MB or smaller (`message_too_large`). A monthly decoded-byte allowance, when the plan has one, is a separate `quota_exceeded` error.
 
 ```php
 use MailGazelle\ValueObjects\Attachment;
@@ -179,8 +199,14 @@ The SDK validates documented limits before it calls the API. Local and remote fa
 | `recipient_suppressed` | `RecipientSuppressedException` | 422 |
 | `attachment_invalid` | `AttachmentException` | 422 |
 | `attachment_too_large` | `AttachmentTooLargeException` | 422 |
+| `quota_exceeded` | `QuotaExceededException` | 422 |
 | `html_too_large` | `HtmlTooLargeException` | 422 |
+| `message_too_large` | `MessageTooLargeException` | 422 |
 | `rate_limited` | `RateLimitException` | 429 |
+
+`unauthenticated` also covers a token for an archived product. `recipient_suppressed` applies to every `to`, `cc`, and `bcc` address and does not consume quota.
+
+`quota_exceeded` means the send would pass the team's monthly email allowance, daily send limit, or monthly attachment allowance. The message states which limit was hit, and the message is not queued. Plans that allow additional sending, or additional attachment size, are not blocked by the monthly checks. Each distinct recipient counts as one send. Replaying a stored idempotency key does not re-check any limit.
 
 Unknown codes become `ApiException`. Network, DNS, TLS, and timeout failures become `TransportException`. The SDK does not retry automatically; use `idempotency_key` when a caller may repeat a send.
 

@@ -50,8 +50,9 @@ final class EmailSendTest extends TestCase
                 ->text('Your invoice')
                 ->from('notif@example.com', 'App')
                 ->replyTo('support@example.com')
+                ->replyTo('billing@example.com', 'Billing')
                 ->tag('campaign', 'welcome')
-                ->tag('weird key!', 'value with spaces')
+                ->tag('source', 'api')
                 ->idempotencyKey('welcome-user-42'),
         );
 
@@ -63,13 +64,65 @@ final class EmailSendTest extends TestCase
             'html' => '<p>Your invoice</p>',
             'text' => 'Your invoice',
             'from' => ['email' => 'notif@example.com', 'name' => 'App'],
-            'reply_to' => ['email' => 'support@example.com'],
+            'reply_to' => [
+                ['email' => 'support@example.com'],
+                ['email' => 'billing@example.com', 'name' => 'Billing'],
+            ],
             'tags' => [
                 'campaign' => 'welcome',
-                'weirdkey' => 'valuewithspaces',
+                'source' => 'api',
             ],
             'idempotency_key' => 'welcome-user-42',
         ], $transport->lastJsonBody());
+    }
+
+    public function testRecipientsHeadersAndOmittedReplyTo(): void
+    {
+        $transport = $this->transport();
+        $this->client($transport)->emails()->send(
+            Email::to('user@example.com', 'Ada')
+                ->addTo('other@example.com')
+                ->cc('billing@example.com', 'Billing')
+                ->bcc('audit@example.com')
+                ->subject('Hello')
+                ->text('Hi')
+                ->withoutReplyTo()
+                ->header('X-Campaign', 'welcome')
+                ->header('From', 'ignored@example.com')
+                ->header('Message-ID', '<id@example.com>'),
+        );
+
+        $this->assertSame([
+            'to' => [
+                ['email' => 'user@example.com', 'name' => 'Ada'],
+                ['email' => 'other@example.com'],
+            ],
+            'subject' => 'Hello',
+            'text' => 'Hi',
+            'cc' => [['email' => 'billing@example.com', 'name' => 'Billing']],
+            'bcc' => [['email' => 'audit@example.com']],
+            'reply_to' => [],
+            'headers' => [
+                'X-Campaign' => 'welcome',
+                'From' => 'ignored@example.com',
+                'Message-ID' => '<id@example.com>',
+            ],
+        ], $transport->lastJsonBody());
+    }
+
+    public function testHeadersHelperReplacesExistingHeaders(): void
+    {
+        $transport = $this->transport();
+        $this->client($transport)->emails()->send(
+            Email::to('user@example.com')
+                ->subject('Hello')
+                ->text('Hi')
+                ->header('X-Old', 'one')
+                ->headers(['X-Campaign' => 'onboarding']),
+        );
+
+        $body = $transport->lastJsonBody();
+        $this->assertSame(['X-Campaign' => 'onboarding'], $body['headers']);
     }
 
     public function testTagsHelperReplacesExistingTags(): void
@@ -99,7 +152,7 @@ final class EmailSendTest extends TestCase
                 ->subject('Invoice')
                 ->html('<p>Attached</p>')
                 ->attach(Attachment::fromContents('invoice.pdf', $bytes, 'application/pdf'))
-                ->attach(Attachment::fromBase64('logo.png', base64_encode('PNG'), contentId: 'logo')),
+                ->attach(Attachment::fromBase64('logo.png', base64_encode('PNG'), contentId: 'cid:<logo>')),
         );
 
         $attachments = $transport->lastJsonBody()['attachments'];

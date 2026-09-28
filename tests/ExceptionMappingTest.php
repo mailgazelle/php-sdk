@@ -13,7 +13,9 @@ use MailGazelle\Exceptions\AuthenticationException;
 use MailGazelle\Exceptions\FromNotAllowedException;
 use MailGazelle\Exceptions\HtmlTooLargeException;
 use MailGazelle\Exceptions\MailGazelleException;
+use MailGazelle\Exceptions\MessageTooLargeException;
 use MailGazelle\Exceptions\ProductNotReadyException;
+use MailGazelle\Exceptions\QuotaExceededException;
 use MailGazelle\Exceptions\RateLimitException;
 use MailGazelle\Exceptions\RecipientSuppressedException;
 use MailGazelle\Exceptions\ValidationException;
@@ -67,7 +69,9 @@ final class ExceptionMappingTest extends TestCase
             'recipient_suppressed' => ['recipient_suppressed', 422, RecipientSuppressedException::class],
             'attachment_invalid' => ['attachment_invalid', 422, AttachmentException::class],
             'attachment_too_large' => ['attachment_too_large', 422, AttachmentTooLargeException::class],
+            'quota_exceeded' => ['quota_exceeded', 422, QuotaExceededException::class],
             'html_too_large' => ['html_too_large', 422, HtmlTooLargeException::class],
+            'message_too_large' => ['message_too_large', 422, MessageTooLargeException::class],
             'rate_limited' => ['rate_limited', 429, RateLimitException::class],
         ];
     }

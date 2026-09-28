@@ -6,6 +6,8 @@ Update this file in the same change as [`doc/api.md`](doc/api.md) and the public
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-28
+
 ### Added
 
 - `Email::addTo()`, `cc()`, and `bcc()` for multiple recipients. Together with `to`, a message can include at most 50 addresses.

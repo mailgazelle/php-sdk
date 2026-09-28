@@ -21,7 +21,7 @@ final class Client
     /**
      * SDK release version used in the default User-Agent.
      */
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.1.0';
 
     /**
      * Public API root documented in the Mail Gazelle integration contract.
